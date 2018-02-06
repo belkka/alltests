@@ -1,0 +1,513 @@
+#!/bin/bash
+
+# 'alltests'
+readonly PROGNAME="$(basename "$0")"
+
+readonly MARK_OK="$(tput setaf 2)✔$(tput sgr0)"
+readonly MARK_UNDEF="$(tput setaf 1; tput bold)?$(tput sgr0)"
+readonly MARK_WRONG="$(tput setaf 1)✘$(tput sgr0)"
+readonly MARK_STDERR_WARNING=" $(tput setaf 3; tput bold)!$(tput sgr0)"
+readonly MAX_LINE_LENGTH=$((($(tput cols) - 3)))
+
+readonly DEFAULT_GNUTIMEFORMAT='real %e, user %U, sys %S, mem %M Kb'
+readonly DEFAULT_TIMEFORMAT='real %R, user %U, sys %S'
+
+readonly GNUTIMEFORMAT=${GNUTIMEFORMAT:-"$DEFAULT_GNUTIMEFORMAT"}
+readonly TIMEFORMAT=${TIMEFORMAT:-"$DEFAULT_TIMEFORMAT"}
+
+
+help() {
+    fmt <<HEREDOC
+    $PROGNAME -- small testing tool
+
+    USAGE: $PROGNAME [--help] [--short] [--abort-on-fail] [--moar <number>]
+           $(printf "%-${#PROGNAME}s" " ") [--show-stderr] [--in <inputfile>] [--believe] [--cpp <cpp source file>] [--no-messages] [<simple bash command>]
+
+    DESCRIPTION:
+        Run <simple bash command> for each *.in file in directories '.', 'test'
+        and 'tests' (*.in files are to be used as input) and compare it's
+        output with corresponding *.out file (i. e. with *.out file that has
+        the same basename).
+
+        The first argument must be a name of program. It can be a name of
+        binary file or system command (e. g. 'python')¹
+
+        If arguments are omited the script looks for *.py, *.cpp and ./prog
+        files (./prog must be executable).
+
+        If *.py files are found the first² (?) one is treated as python
+        source code.
+
+        Otherwise if *.cpp files are found the first² one is treated as c++
+        source code and is to be compiled in order to produce the './prog' file
+        that will be program for testing. If binary file './prog' already
+        exists and is newer than choosen *.cpp file, program won't be
+        recompiled.
+
+        Otherwise if binary './prog' file is found it is treated as
+        a program for testing.
+
+        Otherwise nothing will be done. What do you want to test?
+        Magic will not happen.
+
+         ---
+
+        ¹ the first argument is to be checked with 'which ...' command
+
+        ² \$(find . -maxdepth 1 -name '*.py' -a ! -name 'gentest*.py' -print -quit)
+          or \$(find . -maxdepth 1 -name '*.cpp' -print -quit) respectively
+          will be selected
+
+    OPTIONS
+        --help
+            show this message and exit
+
+        --short
+            suppress printing stdout/answer/stderr when test is not passed or
+            answer is not provided
+
+        --abort-on-fail
+            abort on first failed test
+
+        --moar <number>
+            show <number> lines when printing stdout/correct answer file/stderr
+
+        --show-stderr
+            force printing stderr when test is passed
+
+        --in <inputfile>
+            use <inputfile> for testing insead of looking for files that
+            match default template. Can be used several times
+
+        --believe
+            save the output as correct answer if it is not provided
+
+        --cpp <cppsourcefile>
+            use <cppsourcefile> for compiling the program to be tested. Can be
+            used several times
+
+        --no-messages
+            suppress $PROGNAME's messages
+
+    ENVIRONMENT VARIABLES
+        \$MOAR
+            -- positive integer amount of lines to be printed for stdout and
+               stderr (default: 30)
+
+        \$SHORT
+            -- iff it is set to 'true' the output of program won't be printed
+
+        \$ABORT_ON_FAIL
+            -- iff it is set to 'true' the testing will abort after first
+               failed test
+
+        \$GNUTIMEFORMAT
+            -- format string for the GNU time (see time(1), --format option)
+               (default: '$DEFAULT_GNUTIMEFORMAT')
+
+        \$TIMEFORMAT
+            -- format string for the bash builtin time (see 'help time').
+               (default: '$DEFAULT_TIMEFORMAT')
+
+        Note: Either GNU time or bash builtin time is used, where GNU time has
+        higher priority. It is tested if 'command time -f "" true' returns
+        zero exit code in which case 'command time' supposed to be
+        GNU time and is used
+
+HEREDOC
+}
+
+log_message() {
+    tput setaf 3
+    tput bold
+    echo "[$PROGNAME] $@"
+    tput sgr0
+} >&2
+
+debug_message() { true; }
+
+debug_message_if_not_disabled() {
+    log_message "[DEBUG]" "$@"
+}
+
+abort() {
+    log_message "${1:+$1 }Aborting"
+    exit ${2}
+}
+
+nice_head() {
+# two arguments and optional third:
+#  title ($1), filename ($2), color ($3), maxinal printed amount of characters
+#  of line ($4, optional, default value $MAX_LINE_LENGTH)
+# print the title '[$1]' and the head of file $2 with stripped lines
+
+{
+    local title="$1" filename="$2" max_line_length="${4:-$MAX_LINE_LENGTH}"
+
+    # print title if it is non-empty
+    echo -n "${title:+["$title"]$'\n'}";
+
+    # print first 30 lines and add '...' if there are more lines
+    #sed -e $'31 c\ ...\n32,$d ' "$1"
+
+    # print first $MAX_LINE_AMOUNT lines stripped to length $max_line_length
+    sed -E -e "
+        # strip first $MAX_LINE_AMOUNT lines
+        1,$MAX_LINE_AMOUNT s/^(.{$max_line_length}).+$/\1 …/
+
+        # change one more line to ' …'
+        $((MAX_LINE_AMOUNT + 1)) c\\
+\\ …
+
+        # delete all following lines
+        $((MAX_LINE_AMOUNT + 2)),$ d
+    " "$filename"
+} | colorize "$3"
+}
+
+bool() { if [ 0 -eq "$1" ]; then echo true; else echo false; fi; }
+is_integer() { [ -z "${1//[0-9]}" ]; }  # nonnegative integer
+watch() { for arg; do debug_message "[WATCH]" "$arg = ${!arg}"; done; }
+min() { echo $(($1 > $2 ? $2 : $1)); }
+
+
+shopt -s nullglob  # important
+
+find . -maxdepth 0 &>/dev/null || abort "Your 'find' is crippled."
+
+for requirement in nice_paste runcpp; do
+    which "$requirement" &>/dev/null ||
+    abort "'$requirement' must be in PATH (the script by the same author)."
+done
+
+# Variables
+declare MAX_LINE_AMOUNT=${MOAR:-30}
+if [ "$SHOW_STDERR" != true ]; then SHOW_STDERR=false; fi
+if [ "$SHORT" != true ]; then SHORT=false; fi
+if [ "$ABORT_ON_FAIL" != true ]; then ABORT_ON_FAIL=false; fi
+declare BELIEVE=false
+
+# Parsing options
+options=()
+inputs=()
+cpp_sources=()
+
+skip=false
+for opt; do
+    shift
+    if $skip; then skip=false; continue; fi
+    case "$opt" in
+    '--help') help; exit 0;;
+    '--show-stderr') SHOW_STDERR=true ;;
+    '--short') SHORT=true ;;
+    '--abort-on-fail') ABORT_ON_FAIL=true ;;
+    '--moar')
+        skip=true
+        if [ "$1" -eq 0 ] &>/dev/null; then
+            log_message "Found '$opt 0' option. Assuming '--short'"
+            SHORT=true
+        elif [ "$1" -gt 0 ] &>/dev/null; then
+            MAX_LINE_AMOUNT="$1"
+        else
+            abort "The option '$opt' requires an integer argument, found '$1'."
+        fi ;;
+
+    '--in')
+        skip=true
+        if [ "${1+set}" != set ]; then
+            abort "The argument for '$opt' option is ommited."
+        elif [ ! -r "$1" ]; then
+            abort "The input file '$1' is not readable."
+        else
+            inputs+=("$1")
+        fi ;;
+
+    '--believe') BELIEVE=true ;;
+
+    '--cpp')
+        skip=true
+        if [ "${1+set}" != set ]; then
+            abort "The argument for '$opt' optoin is ommited."
+        else
+            cpp_sources+=("$1")
+        fi ;;
+
+    '--no-messages') function log_message() { true; } ;;
+
+    '--') options+=("$@"); break ;;
+
+    *) options+=("$opt") ;;
+    esac
+done
+
+set -- "${options[@]}"
+
+readonly SHOW_STDERR SHORT ABORT_ON_FAIL MAX_LINE_AMOUNT BELIEVE
+readonly PRINT_INPUTS=${PRINT_INPUTS:-$(bool $((${#inputs[@]}?0:1)))}
+
+
+# Begin
+
+# Determine the set of testing files
+
+if ! ((${#inputs[@]})); then
+    inputs=({.,test,tests}/*.in)
+    if [ 0 -eq ${#inputs[@]} ]; then
+        abort 'There is no test files.'
+    fi
+fi
+
+
+# Determine the command for testing
+
+declare -a program
+
+select_cpp() {
+    local cpp_sources=("$@")
+    local need_compile=false
+
+    if [ ! -x './prog' ]; then
+        need_compile=true
+    else
+        local src
+        for src in "${cpp_sources[@]}"; do
+            if [ "./prog" -ot "$src" ]; then
+                need_compile=true
+                break
+            fi
+        done
+        unset src
+    fi
+
+    if ! $need_compile; then
+        local cpp selected_cpp
+        for cpp in *.cpp; do
+            for selected_cpp in "${cpp_sources[@]}"; do
+                if [ "$cpp" -ef "$selected_cpp" ]; then
+                    continue 2
+                fi
+            done
+            # Found extra cpp file ('$cpp'), the ./prog is to be recompiled
+            need_compile=true
+            break
+        done
+        unset cpp selected_cpp
+    fi
+
+    if $need_compile; then
+        log_message "Executing command 'runcpp --compile ${cpp_sources[@]}'"
+
+        # runcpp -- my script for compiling c++ programs which
+        # produces the executable file ./prog and writes compiler's error
+        # messages to ./compilation.log
+        runcpp --compile --no-log "${cpp_sources[@]}" \
+        || abort 'Compilation failed. See details in ./compilation.log.'
+    fi
+
+    program=('./prog')
+}
+
+
+if ((${#cpp_sources[@]})); then
+    select_cpp "${cpp_sources[@]}"
+elif [ 0 -ne $# ]; then
+    if which "$1" &>/dev/null; then
+        program=("$@")
+    else
+        abort "The first argument '$1' is not executable."
+    fi
+else
+    python_src=$(find . -maxdepth 1 -name '*.py' \
+                 -a ! -name 'gentest*.py' -print -quit)
+
+    if [ 0 -ne ${#python_src} ]; then
+        log_message "Python source code is found: '$python_src'"
+        program=(python "$python_src")
+    else
+        cpp_src=$(find . -maxdepth 1 -name '*.cpp' -print -quit)
+        if [ 0 -ne ${#cpp_src} ]; then
+            log_message "C++ source code is found: '$cpp_src'"
+            select_cpp "$cpp_src"
+        elif [ -x './prog' ]; then
+            log_message 'Binary file ./prog is found'
+            program=(./prog)
+        else
+            log_message 'Neither python nor c++ source code is found'
+            abort 'What do you want to test?'
+        fi
+    fi
+fi
+
+# Making temporary files
+stderr_file=$(mktemp)
+stdout_file=$(mktemp)
+time_file=$(mktemp)
+
+# Clearing temporary files
+on_exit() {
+    rm "$stdout_file" "$stderr_file" "$time_file"
+}
+
+trap on_exit EXIT
+
+# Setup time_ command
+if command time -f '' true &>/dev/null; then
+    debug_message "command time"
+    function time_() {
+        command time -f "$GNUTIMEFORMAT" -o "$time_file" "$@"; return $?;
+    }
+else
+    debug_message "builtin time"
+    function time_() { { time "$@"; } 2>"$time_file"; return $?; }
+fi
+
+# Utilities
+
+colorize() { sed "s/^.*$/$1&${2-$(tput sgr0)}/"; }
+
+count_lines() { command wc -l "$1" | cut -d ' ' -f 1; }
+
+nice_head_lines() { min MAX_LINE_AMOUNT $(count_lines "$1"); }
+
+double_head() {
+    local title1="$1" file1="$2" color1="$3" \
+          title2="$4" file2="$5" color2="$6"
+
+    # nice_paste -- my script that concatenates two files horizontally
+    nice_paste <(
+        declare -i lines1=$(nice_head_lines "$file1")
+        declare -i lines2=$(nice_head_lines "$file2")
+
+        nice_head "$title1" "$file1" "$color1" $((MAX_LINE_LENGTH / 2 - 1))
+
+        # ugly
+        while ((lines2-- > lines1)); do
+            echo | colorize "$color1"
+        done
+    ) <(
+        nice_head "$title2" "$file2" "$color2" $((MAX_LINE_LENGTH / 2 - 1))
+    )
+}
+
+# show stderr and the input file
+show_stderr_and_input() {
+    if $PRINT_INPUTS; then
+        if [ -s "$stderr_file" ]; then
+            double_head "stderr" "$stderr_file" "$(tput setaf 7)" \
+                        "$input" "$input" "$(tput setaf 6)"
+        else
+            nice_head "$input" "$input" "$(tput setaf 6)"
+        fi
+        echo
+    else
+        if [ -s "$stderr_file" ]; then
+            nice_head "stderr" "$stderr_file" "$(tput setaf 7)"
+            echo
+        fi
+    fi
+}
+
+
+# Main part
+log_message "Command to be run: '${program[@]}'"
+log_message 'Testing...'
+
+stderr_reminder=false
+fail=false
+
+for input in "${inputs[@]}" ; do
+    declare verdict=
+
+    echo -n " = $(basename "$input"): ..."
+
+    time_ "${program[@]}" <"$input" >"$stdout_file" 2>"$stderr_file"
+    exit_code=$?
+
+    echo -n $'\b \b\b\b'  # back 3 symbols
+
+    # Add trailing newline to $stdout_file if omitted
+    # it's required for nice formatting while using double_head()
+    test -z "$(tail -c1 "$stdout_file")" || echo >> "$stdout_file"
+
+    if [ $exit_code -ne 0 ]; then
+        verdict=RE
+    fi
+
+    if [ -z "$verdict" ]; then
+        declare answer="${input%.in}.out"
+        test -r "$answer"
+        answer_provided=$(bool $?)
+
+        if $answer_provided; then
+            if diff --brief --ignore-space "$stdout_file" "$answer" &>/dev/null
+            then
+                verdict=OK
+            else
+                verdict=WA
+            fi
+        fi
+    fi
+
+    declare mark
+    case "$verdict" in
+    OK) mark="$MARK_OK";;
+    WA) mark="$MARK_WRONG";;
+    RE) mark="$MARK_WRONG";;
+    '') mark="$MARK_UNDEF";;
+    *) abort "Unexpected value of veridct: '$verdict'";;
+    esac
+
+    declare warn=
+    if [ -s "$stderr_file" ]; then
+        warn="$MARK_STDERR_WARNING"
+        stderr_reminder=true
+    fi
+
+    echo "$mark$warn  ($(tail -n 1 "$time_file"))"
+    unset mark warn
+
+    if [ "$verdict" != OK ]; then
+        if ! $SHORT; then
+            if [ "$verdict" = WA ]; then
+                double_head "stdout" "$stdout_file" \
+                            "$(tput setaf 4; tput bold)" \
+                            "$answer" "$answer" \
+                            "$(tput setaf 2)"
+            else
+                nice_head "stdout" "$stdout_file" "$(tput setaf 4; tput bold)"
+            fi
+            echo
+
+            show_stderr_and_input
+        fi
+
+        if [ -z "$verdict" ] && ! $answer_provided && $BELIEVE; then
+            log_message "Saving the output (due to --believe): '$answer'"
+            cp "$stdout_file" "$answer"
+        fi
+
+        if [ -n "$verdict" ]; then
+            fail=true
+            if $ABORT_ON_FAIL; then
+                log_message "Test failed, aborting."
+                break
+            fi
+
+            if [ "$verdict" = RE ]; then
+                break;
+            fi
+        fi
+
+    elif $SHOW_STDERR; then
+        show_stderr_and_input
+    fi
+done
+
+if $fail; then
+    case "$verdict" in
+    RE) log_message "Runtime error. Exit code: $exit_code";;
+    esac
+    exit 1
+elif $stderr_reminder; then
+    log_message "WARNING! Some text was written to stderr during testing"
+fi
