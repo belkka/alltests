@@ -180,6 +180,14 @@ for requirement in nice_paste runcpp; do
     abort "'$requirement' must be in PATH (the script by the same author)."
 done
 
+if which "floatdiff" &>/dev/null; then
+    function diff() { floatdiff "$@"; }
+elif which "diff" &>/dev/null; then
+    function diff() { diff --brief --ignore-space "$@"; }
+else
+    abort "'diff' required"
+fi
+
 # Variables
 declare MAX_LINE_AMOUNT=${MOAR:-30}
 if [ "$SHOW_STDERR" != true ]; then SHOW_STDERR=false; fi
@@ -439,7 +447,7 @@ for input in "${inputs[@]}" ; do
         answer_provided=$(bool $?)
 
         if $answer_provided; then
-            if diff --brief --ignore-space "$stdout_file" "$answer" &>/dev/null
+            if diff "$stdout_file" "$answer" &>/dev/null
             then
                 verdict=OK
             else
