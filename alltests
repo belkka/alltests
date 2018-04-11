@@ -21,7 +21,7 @@ help() {
     $PROGNAME -- small testing tool
 
     USAGE: $PROGNAME [--help] [--short] [--abort-on-fail] [--moar <number>]
-           $(printf "%-${#PROGNAME}s" " ") [--show-stderr] [--in <inputfile>] [--believe] [--cpp <cpp source file>] [--no-messages] [<simple bash command>]
+           $(printf "%-${#PROGNAME}s" " ") [--show-stderr] [--in <inputfile>] [--believe] [--cpp <cpp source file>] [--no-messages] [--float-precision <float>] [<simple bash command>]
 
     DESCRIPTION:
         Run <simple bash command> for each *.in file in directories '.', 'test'
@@ -88,6 +88,9 @@ help() {
 
         --no-messages
             suppress $PROGNAME's messages
+
+        --float-precision <float>
+            float precision for comparing answers
 
     ENVIRONMENT VARIABLES
         \$MOAR
@@ -181,9 +184,11 @@ for requirement in nice_paste runcpp; do
 done
 
 if which "floatdiff" &>/dev/null; then
-    function diff() { floatdiff "$@"; }
+    declare -r USING_FLOATDIFF=true
+    function diff() { floatdiff "$1" "$2" "$FLOAT_PRECISION"; }
 elif which "diff" &>/dev/null; then
-    function diff() { diff --brief --ignore-space "$@"; }
+    declare -r USING_FLOATDIFF=false
+    function diff() { diff --brief --ignore-space "$1" "$2"; }
 else
     abort "'diff' required"
 fi
@@ -194,6 +199,7 @@ if [ "$SHOW_STDERR" != true ]; then SHOW_STDERR=false; fi
 if [ "$SHORT" != true ]; then SHORT=false; fi
 if [ "$ABORT_ON_FAIL" != true ]; then ABORT_ON_FAIL=false; fi
 declare BELIEVE=false
+declare FLOAT_PRECISION=
 
 # Parsing options
 options=()
@@ -242,6 +248,14 @@ for opt; do
 
     '--no-messages') function log_message() { true; } ;;
 
+    '--float-precision')
+        skip=true
+        if [ "${1+set}" != set ]; then
+            abort "The argument for '$opt' option is ommited."
+        else
+            FLOAT_PRECISION="$1"
+        fi ;;
+
     '--') options+=("$@"); break ;;
 
     *) options+=("$opt") ;;
@@ -252,6 +266,10 @@ set -- "${options[@]}"
 
 readonly SHOW_STDERR SHORT ABORT_ON_FAIL MAX_LINE_AMOUNT BELIEVE
 readonly PRINT_INPUTS=${PRINT_INPUTS:-$(bool $((${#inputs[@]}?0:1)))}
+
+if [ "$FLOAT_PRECISION" ] && ! $USING_FLOATDIFF; then
+    log_message "Warning: floatdiff is not used, option --float-precision is ignored"
+fi
 
 
 # Begin
