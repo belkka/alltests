@@ -185,10 +185,14 @@ done
 
 if which "floatdiff" &>/dev/null; then
     declare -r USING_FLOATDIFF=true
-    function diff() { floatdiff "$1" "$2" "$FLOAT_PRECISION"; }
+    function diff() {
+        floatdiff "$1" "$2"${FLOAT_PRECISION:+ "$FLOAT_PRECISION"} >/dev/null;
+    }
 elif which "diff" &>/dev/null; then
     declare -r USING_FLOATDIFF=false
-    function diff() { diff --brief --ignore-space "$1" "$2"; }
+    function diff() {
+        diff --brief --ignore-space "$1" "$2" &>/dev/null;
+    }
 else
     abort "'diff' required"
 fi
@@ -465,7 +469,7 @@ for input in "${inputs[@]}" ; do
         answer_provided=$(bool $?)
 
         if $answer_provided; then
-            if diff "$stdout_file" "$answer" &>/dev/null
+            if diff "$stdout_file" "$answer"
             then
                 verdict=OK
             else
