@@ -1,0 +1,138 @@
+#!/bin/bash
+
+readonly PROGNAME="$(basename $0)"
+
+declare -ar WARNINGS=(-Wall -Wfloat-equal -Wlogical-op -Wshift-overflow=2 -Wduplicated-cond)
+# '-Wconversion '
+declare -ar COMMON_FLAGS=(-D LOCAL -g "${WARNINGS[@]}")
+declare -ar STDFLAG=(${STDFLAG:- -std=gnu++17})
+declare -a COMPILER=(g++ "${COMMON_FLAGS[@]}" "${STDFLAG[@]}")
+
+ONLY_COMPILE=false
+SHOW_LOG=true
+MESSAGES=true
+
+function help() {
+    cat <<HEREDOC
+    Usage:
+        $PROGNAME <source file>
+
+    Options:
+        --help
+            show this help message
+
+        -c
+            use C compiler, not C++
+
+        --compile
+            only compile, don't run
+
+        --no-log
+            don't show log message if compilation fails
+
+        --
+            end of option list
+
+    Variables:
+        STDFLAG
+            current: ${STDFLAG}
+            example value: STDFLAG='-std=gnu++17'
+            value of this variable is substituted among with compilator arguments
+HEREDOC
+}
+
+
+# Parsing options
+declare -a params=()
+for argument; do
+    shift
+    case "$argument" in
+    --help) help; exit;;
+
+    -c) COMPILER=(gcc "${COMMON_FLAGS[@]}");;
+
+    --compile)
+        ONLY_COMPILE=true
+        echo() { :;}  # messages off
+        ;;
+
+    --no-log) SHOW_LOG=false;;
+
+    --) params+=("$@"); break;;
+
+    -*) builtin echo "Unrecognized option: '$argument'" >&2; exit 1;;
+    *) params+=("$argument");;
+    esac
+done
+set -- "${params[@]}"
+unset params
+
+# Parsing positional arguments
+readonly src="$1"; shift  # source file
+declare -ar args=("$@")  # arguments
+
+if [ -z "$src" ]; then help; exit 1; fi
+
+# Setting variables
+declare executable='./prog'
+readonly compiler_messages='compilation.log'
+readonly out_file='output.txt'
+
+# Choosing executable name
+if [ -d "$executable" ]; then
+    declare -i i=1
+    declare new_name="$executable"
+    while [ -d "$new_name" ]; do
+        echo "'$new_name' exists and is a directory"
+        new_name="${executable} ($((i++)))"
+    done
+    executable="$new_name"
+    echo "Will be used name '${executable}'"
+fi
+
+# Functions
+function compile() {
+    echo -n "Compiling $(basename "$src")... "
+
+    "${COMPILER[@]}" -o "$executable" "$src" 2>"$compiler_messages"
+    local exit_code=$?
+
+    if (($exit_code)); then
+        echo "Fail."
+        if $SHOW_LOG; then
+            less "$compiler_messages"
+        fi
+    else
+        echo "Success."
+    fi
+
+    [ -s "$compiler_messages" ] || rm "$compiler_messages"
+
+    return $exit_code
+}
+
+function run() {
+    echo "Running $executable $@"
+    echo " -----"
+
+    "$executable" "$@"
+    local exit_code=$?
+
+    echo
+    echo " -----"
+    echo "Exit code: $exit_code"
+
+    if [ $exit_code -eq 0 -a -r "$out_file" ]; then
+        echo " = $out_file = "
+        cat "$out_file"
+        echo
+        echo " ===== EOF ====="
+    fi
+}
+
+# Main
+if $ONLY_COMPILE; then
+    compile
+else
+    compile && run "$@"
+fi

@@ -4,22 +4,22 @@ alltests -- run arbitrary command on the set of tests
 
 ## Requirements:
 
-* Two other scripts (by the same author) to be in PATH: nice_paste, runcpp
-* Unix commands to be available: find, sed, time, rm (nothing user's will be removed)
+* Two other scripts from this repo to be in PATH: nice_paste, runcpp
+* Unix commands: find, sed, time, rm
 
 
 ## Examples (aplusb):
 
 $ alltests python2 sum.py
 
-Will run command 'python2 sum.py' on the given set of tests (test/*.in)
+Run command 'python2 sum.py' on the given set of tests (test/*.in)
 and compare outputs with corresponding files (test/*.out)
 
 
 $ alltests
 
-Will automatically find source file. If several available random is choosen. Python source code has precedence over C++
-Thus, it's equivalent to the previous example (./alltests python sum.py)
+Automatically find and use *.py or *.cpp file. Python source code has precedence over C++
+If several choices available random is choosen.
 
 
 $ alltests --cpp sum.cpp --abort-on-fail
@@ -29,20 +29,17 @@ Aborts on the first test that is not passed
 
 $ alltests --cpp sum.cpp --short
 
-Will print only results of tests, no stdout/correct answer
+Print only results of tests, no verbose stdout/correct answer
 
 
 $ alltests --help
 
-Try it for more details
+Try it
 
 
 ## Examples (sort):
 
 $ alltests python sort.py
-
-Nice, but what if...
-
 
 $ alltests sort  # unix sort command
 
