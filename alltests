@@ -384,11 +384,17 @@ trap on_exit EXIT
 if command time -f '' true &>/dev/null; then
     debug_message "command time"
     function time_() {
-        command time -f "$GNUTIMEFORMAT" -o "$time_file" "$@"; return $?;
+        command time -f "$GNUTIMEFORMAT" -o "$time_file" "$@"
     }
 else
     debug_message "builtin time"
-    function time_() { { time "$@"; } 2>"$time_file"; return $?; }
+    function time_() {
+        # builtin time prints its output to stderr
+        # need to keep original stderr and save time output to $time_file
+        local stderr
+        : {stderr}>&2
+        { time "$@" 2>&$stderr; } 2>"$time_file"
+    }
 fi
 
 # Utilities
