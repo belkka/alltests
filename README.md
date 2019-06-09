@@ -1,46 +1,51 @@
-alltests -- run arbitrary command on the set of tests
+# alltests --- test program on the set of input-output files
 
-## Description: TODO
 
 ## Requirements:
 
-* Two other scripts from this repo to be in PATH: nice_paste, runcpp
+* Two other scripts from this repo to be in PATH: nice\_paste, runcpp
 * Unix commands: find, sed, time, rm
 
 
 ## Examples (aplusb):
 
+Run command `python2 sum.py` on the given set of tests (test/\*.in)
+and compare outputs with corresponding files (test/\*.out):
+```bash
 $ alltests python2 sum.py
+```
 
-Run command 'python2 sum.py' on the given set of tests (test/*.in)
-and compare outputs with corresponding files (test/*.out)
-
-
+Automatically find and use `*.py` or `*.cpp` file.
+Python files have precedence over C++.
+If several files of the same filetype are available random is choosen.
+```bash
 $ alltests
+```
 
-Automatically find and use *.py or *.cpp file. Python source code has precedence over C++
-If several choices available random is choosen.
-
-
+Abort on the first failed test:
+```bash
 $ alltests --cpp sum.cpp --abort-on-fail
+```
 
-Aborts on the first test that is not passed
-
-
+Print only results of tests, no verbose stdout/correct answer:
+```bash
 $ alltests --cpp sum.cpp --short
+```
 
-Print only results of tests, no verbose stdout/correct answer
-
-
+Print help:
+```bash
 $ alltests --help
-
-Try it
+```
 
 
 ## Examples (sort):
 
+If you have several `*.py` files in the same directory:
+```bash
 $ alltests python sort.py
+```
 
+You can specify any command for testing:
+```bash
 $ alltests sort  # unix sort command
-
-It works! You can specify any command!
+```
