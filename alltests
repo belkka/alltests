@@ -191,7 +191,7 @@ if which "floatdiff" &>/dev/null; then
 elif which "diff" &>/dev/null; then
     declare -r USING_FLOATDIFF=false
     function diff() {
-        diff --brief --ignore-space "$1" "$2" &>/dev/null;
+        command diff --brief --ignore-space-change "$1" "$2" &>/dev/null;
     }
 else
     abort "'diff' required"

@@ -1,2 +1,2 @@
 #!/bin/bash
-paste "$@" | column -nts $'\t'
+paste "$@" | column -ts $'\t'
