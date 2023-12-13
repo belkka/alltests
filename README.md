@@ -3,7 +3,7 @@
 
 ## Requirements:
 
-* Two other scripts from this repo to be in PATH: nice\_paste, runcpp
+* Other scripts from this repo to be in PATH: `nice_paste`, `runcpp`, (optionally, requires python3) `floatdiff`
 * Unix commands: find, sed, time, rm
 
 
